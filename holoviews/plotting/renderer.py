@@ -52,6 +52,7 @@ MIME_TYPES = {
     'pdf':  'application/pdf',
     'html':  None,
     'json':  None
+    'server': None
 }
 
 static_template = """
