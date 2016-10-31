@@ -197,7 +197,7 @@ class Callback(object):
         value change at once rather than firing off multiple plot updates.
         """
         self.events.append((attr, old, new))
-        if self.trigger_change not in self.plot.document._session_callbacks:
+        if self.trigger not in self.plot.document._session_callbacks:
             self.plot.document.add_timeout_callback(self.trigger, 50)
 
 
