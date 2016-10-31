@@ -150,8 +150,12 @@ class Callback(object):
     def __init__(self, plot, streams, source, **params):
         self.plot = plot
         self.streams = streams
-        self.comm = self._comm_type(plot, on_msg=self.on_msg)
+        if plot.renderer.mode != 'server':
+            self.comm = self._comm_type(plot, on_msg=self.on_msg)
         self.source = source
+        self.plot_handles = {}
+        self.in_progress = False
+        self.events = []
 
 
     def initialize(self):
@@ -164,7 +168,10 @@ class Callback(object):
             for handle in self.handles:
                 if handle not in plot.handles or handle in found:
                     continue
-                self.set_customjs(plot.handles[handle])
+                if self.plot.renderer.mode == 'server':
+                    self.set_onchange(plot.handles[handle])
+                else:
+                    self.set_customjs(plot.handles[handle])
                 found.append(handle)
         if len(found) != len(self.handles):
             self.warning('Plotting handle for JS callback not found')
@@ -182,6 +189,69 @@ class Callback(object):
 
     def _process_msg(self, msg):
         return msg
+
+
+    def on_change(self, attr, old, new):
+        """
+        Process change events adding timeout to process multiple concerted
+        value change at once rather than firing off multiple plot updates.
+        """
+        self.events.append((attr, old, new))
+        if self.trigger_change not in self.plot.document._session_callbacks:
+            self.plot.document.add_timeout_callback(self.trigger, 50)
+
+
+    def trigger(self):
+        """
+        Trigger callback change event and triggering corresponding streams.
+        """
+        if not self.events:
+            return
+
+        values = {}
+        for attr, path in self.attributes.items():
+            attr_path = path.split('.')
+            obj = self.plot_handles.get(attr_path[0])
+            if not obj:
+                raise Exception('Bokeh plot attribute %s could not be found' % path)
+            for p in attr_path[1:]:
+                if p == 'attributes':
+                    continue
+                if isinstance(obj, dict):
+                    obj = obj.get(p)
+                else:
+                    obj = getattr(obj, p, None)
+            values[attr] = obj
+        values = self._process_msg(values)
+        if any(v is None for v in values.values()):
+            return
+        for stream in self.streams:
+            stream.update(trigger=False, **values)
+        Stream.trigger(self.streams)
+        self.events = []
+
+
+    def set_onchange(self, handle):
+        """
+        Set up on_change events for bokeh server interactions.
+        """
+        handles = {}
+        subplots = list(self.plot.subplots.values())[::-1] if self.plot.subplots else []
+        plots = [self.plot] + subplots
+        for plot in plots:
+            handles.update({k: v for k, v in plot.handles.items()
+                            if k in self.handles})
+        self.plot_handles = handles
+        if id(handle.callback) in self._callbacks:
+            cb = self._callbacks[id(self.on_change)]
+            if isinstance(cb, type(self)):
+                cb.streams += self.streams
+        else:
+            for v in self.attributes.values():
+                attr = [p for p in v.split('.') if p != 'attributes'][1]
+                if hasattr(handle, attr):
+                    handle.on_change(attr, self.on_change)
+                    self._callbacks[id(self.on_change)] = self
 
 
     def set_customjs(self, handle):
