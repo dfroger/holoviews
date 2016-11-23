@@ -211,7 +211,7 @@ class DictInterface(Interface):
                            for k, v in dataset.data.items())
         if indexed and len(list(data.values())[0]) == 1:
             return data[dataset.vdims[0].name][0]
-        return data
+        return data, {}
 
 
     @classmethod
